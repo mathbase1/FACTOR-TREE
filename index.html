@@ -1,1 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Factor Tree (GCSE)</title>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js" defer></script>
+<style>
+:root{
+  --node:58px;           /* diameter of nodes */
+  --levelGap:100px;      /* vertical distance between levels */
+  --brand:#2563eb; --ink:#0f172a; --muted:#e5e7eb; --good:#16a34a; --bad:#dc2626;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,'Helvetica Neue',Arial;
+  color:var(--ink);
+  background:linear-gradient(180deg,#f6f9ff 0%,#eef3ff 100%);
+  display:flex; justify-content:center; align-items:flex-start;
+}
 
+/* App canvas */
+#app{ width:1100px; padding:16px 18px; transform-origin:top center }
+h1{font-weight:800; text-align:center; font-size:clamp(1.2rem,2.6vw,1.8rem)}
+#instructions{opacity:.85; text-align:center; margin:.25rem 0 .6rem; font-size:.95rem}
+#successLine{ text-align:center; font-weight:900; color:#0b3cc7; min-height:1.6em; }
+
+/* HUD / panel */
+#panel{
+  display:flex; flex-wrap:wrap; gap:.5rem; justify-content:center; align-items:center;
+  margin:.5rem 0 .7rem;
+}
+.pill{display:inline-flex; align-items:center; gap:.5rem; padding:.38rem .8rem; border:1px solid var(--muted); border-radius:999px; background:#fff; font-weight:700}
+button{
+  border:none; border-radius:10px; padding:.55rem 1.2rem; font-weight:800; cursor:pointer; font-size:1rem;
+  background:#2563eb; color:#fff; box-shadow:0 6px 18px rgba(37,99,235,.25)
+}
+button:hover{filter:brightness(1.05)}
+button.secondary{background:#9aa3af}
+button:disabled{opacity:.45; cursor:not-allowed}
+
+/* Scene */
+#wrap{
+  position:relative; width:1080px; height:640px; margin:0 auto;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(37,99,235,.12), transparent 48%),
+    transparent;
+  border-radius:14px;
+}
+svg{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
+
+/* Nodes */
+.node{
+  position:absolute; width:var(--node); height:var(--node);
+  line-height:var(--node); text-align:center; font-weight:800;
+  background:#fff; border:3px solid var(--brand); border-radius:50%;
+  box-shadow:0 2px 8px rgba(0,0,0,.15); user-select:none;
+  font-size:clamp(.9rem,1.8vw,1.1rem);
+}
+.node:active{transform:scale(.94)}
+.prime{ background:#fff8b5; border-color:#caa400; cursor:default }
+.input{ background:#f7f7f7; border:3px dashed #9aa3af; cursor:default }
+.input input{
+  width:100%; height:100%; border:none; background:transparent; text-align:center; font-weight:800;
+  font-size:1rem; outline:none;
+}
+.wrong{ border-color:var(--bad) !important }
+.correctFlash{ border-color:var(--good) !important }
+
+/* Overlays (setup & end) */
+.overlay{position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center;
+  visibility:hidden; opacity:0; transition:opacity .25s ease; z-index:1000}
+.overlay.show{visibility:visible; opacity:1}
+.dialog{
+  background:#fff; padding:22px 24px; border-radius:12px; text-align:center;
+  box-shadow:0 14px 40px rgba(0,0,0,.28); width:min(92vw,380px)
+}
+.dialog h2{margin:0 0 .6rem}
+.dialog label{display:block; margin:.7rem 0 .35rem; font-weight:700}
+.dialog select,.dialog input[type=number]{
+  width:100%; padding:.45rem .6rem; border:2px solid var(--brand); border-radius:8px; font-size:1rem;
+}
+.dialog .row{display:flex; align-items:center; gap:.5rem; justify-content:center; margin-top:.4rem}
+.dialog button{width:100%; margin-top:.9rem}
+
+/* Toast */
+#toast{
+  position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+  background:#111827; color:#fff; padding:.5rem .9rem; border-radius:8px; display:none; font-weight:700
+}
+</style>
+</head>
+<body>
+<main id="app" aria-live="polite">
+  <h1>Build a factor tree — finish with primes</h1>
+  <p id="instructions">Click a composite number to split it. Enter factors & hit <b>Enter</b>. Use <b>Check</b> when done.</p>
+  <div id="successLine"></div>
+
+  <!-- Scene -->
+  <div id="wrap" aria-label="Factor tree canvas">
+    <svg id="lines"></svg>
+  </div>
+
+  <!-- Controls -->
+  <div id="panel" style="visibility:hidden">
+    <button id="checkBtn">Check</button>
+    <button id="nextBtn" disabled>Next</button>
+    <button id="skipBtn" class="secondary">Skip</button>
+    <span class="pill" id="score">Score 0</span>
+    <span class="pill" id="timer">Time 00:00</span>
+  </div>
+
+  <!-- Setup -->
+  <div class="overlay show" id="setupOv">
+    <div class="dialog">
+      <h2>Game Setup</h2>
+
+      <label for="diffSel">Difficulty</label>
+      <select id="diffSel">
+        <option value="easy">Foundation</option>
+        <option value="standard" selected>Standard</option>
+        <option value="higher">Higher</option>
+      </select>
+
+      <label for="timeSel" style="margin-top:.55rem">Timer</label>
+      <select id="timeSel">
+        <option value="300">5 min</option>
+        <option value="600" selected>10 min</option>
+        <option value="1200">20 min</option>
+        <option value="-1">No limit</option>
+      </select>
+
+      <div class="row">
+        <input type="checkbox" id="targetChk" />
+        <label for="targetChk" style="margin:0">Target mode</label>
+      </div>
+      <input id="targetInput" type="number" min="1" placeholder="Target perfect trees" style="display:none"/>
+
+      <button id="beginBtn">Begin</button>
+    </div>
+  </div>
+
+  <!-- End -->
+  <div class="overlay" id="endOv">
+    <div class="dialog">
+      <h2 id="endTitle">Finished</h2>
+      <p id="endMsg"></p>
+      <button id="againBtn">Play again</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+</main>
+
+<script>
+/* ==================== Fit-to-viewport ==================== */
+let SCALE=1;
+function fitToViewport(){
+  const app=document.getElementById('app');
+  app.style.transform='none';
+  const r=app.getBoundingClientRect();
+  const m=12;
+  const sX=(innerWidth - m*2)/r.width;
+  const sY=(innerHeight - m*2)/r.height;
+  SCALE=Math.min(1, sX, sY);
+  app.style.transform=`scale(${SCALE})`;
+}
+addEventListener('resize', ()=>requestAnimationFrame(fitToViewport));
+addEventListener('DOMContentLoaded', fitToViewport);
+addEventListener('load', fitToViewport);
+
+/* ==================== Helpers ==================== */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const showToast=t=>{const o=$("#toast");o.textContent=t;o.style.display="block";setTimeout(()=>o.style.display="none",1900);};
+const fmt=s=>`${String(s/60|0).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+
+/* Prime helpers */
+function isPrime(n){ if(!Number.isInteger(n)||n<2) return false; for(let i=2;i*i<=n;i++) if(n%i===0) return false; return true; }
+
+/* ==================== Random composite generator ====================
+   - Not prime
+   - Divisible by at least one of {2,3,4,5,6,7,8,9,10,11,12,13}
+   - Range depends on difficulty
+   - Small no-repeat buffer
+   - For 'higher', the FIRST question is forced to 432 (testing)
+===================================================================== */
+const RECENT_MAX = 12;
+let recentNs = [];
+let difficulty = 'standard';
+let forceFirst432 = false;
+
+function allowedByFactors(n){
+  const req = [2,3,4,5,6,7,8,9,10,11,12,13];
+  return req.some(f=>n%f===0);
+}
+function rangeForDifficulty(d){
+  if(d==='easy') return {min:10,max:60};
+  if(d==='higher') return {min:200,max:1000};
+  return {min:10,max:400}; // standard
+}
+function pickCompositeInRange(min,max){
+  const ok = n => n>=min && n<=max && !isPrime(n) && allowedByFactors(n);
+  // random attempts, avoiding recent repeats
+  for(let tries=0; tries<2000; tries++){
+    const n = Math.floor(Math.random()*(max-min+1))+min;
+    if(ok(n) && !recentNs.includes(n)){
+      recentNs.push(n); if(recentNs.length>RECENT_MAX) recentNs.shift();
+      return n;
+    }
+  }
+  // fallback pool
+  const pool=[]; for(let n=min;n<=max;n++) if(ok(n)) pool.push(n);
+  if(pool.length===0) return 120;
+  const fresh = pool.filter(n=>!recentNs.includes(n));
+  const arr = fresh.length?fresh:pool;
+  const pick = arr[Math.floor(Math.random()*arr.length)];
+  recentNs.push(pick); if(recentNs.length>RECENT_MAX) recentNs.shift();
+  return pick;
+}
+function randomComposite(){
+  // Force 432 on first higher-level question
+  if(forceFirst432){
+    forceFirst432 = false;
+    recentNs.push(432); if(recentNs.length>RECENT_MAX) recentNs.shift();
+    return 432;
+  }
+  const {min,max} = rangeForDifficulty(difficulty);
+  return pickCompositeInRange(min,max);
+}
+
+/* ==================== Geometry & layout ==================== */
+const wrap=$("#wrap"), svg=$("#lines");
+const NODE_D=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--node'))||58;
+const NODE_R=NODE_D/2;
+const LEVEL_GAP=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--levelGap'))||100;
+const MARGIN=16;
+
+/* default half-spread captured from first split */
+let DEFAULT_HALF=null;
+const DEFAULT_HALF_FALLBACK=100;
+
+/* === EDIT THIS: cap sibling spread ONLY while rows are being adjusted (center-to-center px) === */
+const MAX_ADJUSTED_SPREAD = 100;
+
+/* Spacing */
+const MIN_SEP_ROW = NODE_D + 24;   // non-siblings at same level
+const SIB_SEP     = NODE_D + 10;   // siblings (children of same parent)
+const CROSS_PAD   = NODE_R + 10;   // buffer near lane borders
+const MIN_X = MARGIN + NODE_R;
+const MAX_X = () => wrap.clientWidth - (MARGIN + NODE_R);
+
+/* Reservations per level */
+const levelCenters=new Map();
+function reserve(level,x){ if(!levelCenters.has(level)) levelCenters.set(level,[]); levelCenters.get(level).push(x); }
+function unreserve(level,x){ const arr=levelCenters.get(level); if(!arr) return; const i=arr.findIndex(v=>Math.abs(v-x)<0.5); if(i>=0) arr.splice(i,1); }
+function clearReservations(){ levelCenters.clear(); }
+
+function getCenter(el){ return { x:parseFloat(el.style.left)+NODE_R, y:parseFloat(el.style.top)+NODE_R }; }
+function setCenter(el, x, y){
+  const level = parseInt(el.dataset.level,10);
+  const old = getCenter(el).x;
+  unreserve(level, old);
+  el.style.left = (x - NODE_R) + 'px';
+  if(typeof y==='number') el.style.top = (y - NODE_R) + 'px';
+  reserve(level, x);
+  updateLineForChild(el);
+}
+
+/* Edges */
+const lineByChildId=new Map();
+function connect(a,b){
+  const ax=getCenter(a).x, ay=getCenter(a).y;
+  const bx=getCenter(b).x, by=getCenter(b).y;
+  const l=document.createElementNS("http://www.w3.org/2000/svg","line");
+  l.setAttribute("x1",ax); l.setAttribute("y1",ay);
+  l.setAttribute("x2",bx); l.setAttribute("y2",by);
+  l.setAttribute("stroke","#0b4ad8"); l.setAttribute("stroke-width","3");
+  l.setAttribute("stroke-linecap","round");
+  l.dataset.parent=a.dataset.id; l.dataset.child=b.dataset.id;
+  svg.appendChild(l);
+  lineByChildId.set(b.dataset.id, l);
+}
+function updateLineForChild(child){
+  const line=lineByChildId.get(child.dataset.id); if(!line) return;
+  const parent=$(`[data-id="${child.dataset.parent}"]`); if(!parent) return;
+  const a=getCenter(parent), b=getCenter(child);
+  line.setAttribute("x1",a.x); line.setAttribute("y1",a.y);
+  line.setAttribute("x2",b.x); line.setAttribute("y2",b.y);
+}
+
+/* Lanes */
+function lanesForRow(parents){
+  parents = parents.slice().sort((a,b)=>getCenter(a).x - getCenter(b).x);
+  const xs = parents.map(p=>getCenter(p).x);
+  return parents.map((p,i)=>{
+    const L = (i>0           ? (xs[i-1]+xs[i])/2 : MIN_X);
+    const R = (i<xs.length-1 ? (xs[i]+xs[i+1])/2 : MAX_X());
+    return {parent:p,L,R};
+  });
+}
+
+/* -------- Row packing: centered (no skew) for early rows -------- */
+function centeredPairsFromParents(parents){
+  const lanes = lanesForRow(parents);
+  const defHalf = (DEFAULT_HALF ?? DEFAULT_HALF_FALLBACK);
+  return lanes.map(({parent,L,R})=>{
+    const pid=parent.dataset.id;
+    const kids=[...document.querySelectorAll(`.node[data-parent="${pid}"], .input[data-parent="${pid}"]`)]
+      .sort((a,b)=>getCenter(a).x - getCenter(b).x);
+    const [kL,kR]=kids;
+    const p = getCenter(parent);
+    const baseL = L + MIN_SEP_ROW/2 + CROSS_PAD;
+    const baseR = R - MIN_SEP_ROW/2 - CROSS_PAD;
+    const maxHalf = Math.max(SIB_SEP/2, Math.min(p.x - baseL, baseR - p.x));
+    // When ADJUSTING (multiple parents), cap by MAX_ADJUSTED_SPREAD
+    let half = Math.min(defHalf, maxHalf, MAX_ADJUSTED_SPREAD/2);
+    return {parent, kL, kR, px:p.x, L:baseL, R:baseR, half};
+  });
+}
+/* shrink halves only (keep centered), to satisfy pair-to-pair gaps */
+function packRowCentered(pairs){
+  if(pairs.length<=1) return;
+  let changed=true, guard=0;
+  while(changed && guard++<60){
+    changed=false;
+    for(let i=1;i<pairs.length;i++){
+      const A=pairs[i-1], B=pairs[i];
+      let rightA = A.px + A.half;
+      let leftB  = B.px - B.half;
+      const gap = leftB - rightA;
+      if(gap < MIN_SEP_ROW){
+        let need = MIN_SEP_ROW - gap;
+        const roomA = A.half - Math.max(SIB_SEP/2, 0);
+        const roomB = B.half - Math.max(SIB_SEP/2, 0);
+        const takeA = Math.min(need/2, roomA);
+        const takeB = Math.min(need - takeA, roomB);
+        A.half -= takeA; B.half -= takeB; changed = changed || takeA>0 || takeB>0;
+        if( (B.px - B.half) - (A.px + A.half) < MIN_SEP_ROW ){
+          const need2 = MIN_SEP_ROW - ((B.px - B.half) - (A.px + A.half));
+          const roomA2 = A.half - SIB_SEP/2;
+          const roomB2 = B.half - SIB_SEP/2;
+          const moreA = Math.min(need2/2, Math.max(0,roomA2));
+          const moreB = Math.min(need2 - moreA, Math.max(0,roomB2));
+          if(moreA>0||moreB>0){ A.half-=moreA; B.half-=moreB; changed=true; }
+        }
+      }
+    }
+  }
+}
+function applyCentered(pairs, childY){
+  pairs.forEach(p=>{
+    const left  = p.px - p.half;
+    const right = p.px + p.half;
+    setCenter(p.kL, left,  childY);
+    setCenter(p.kR, right, childY);
+  });
+}
+
+/* -------- Row packing with skew (allowed) for rows 3+ -------- */
+function freePairsFromParents(parents){
+  const lanes = lanesForRow(parents);
+  const defHalf = (DEFAULT_HALF ?? DEFAULT_HALF_FALLBACK);
+  return lanes.map(({parent,L,R})=>{
+    const pid=parent.dataset.id;
+    const kids=[...document.querySelectorAll(`.node[data-parent="${pid}"], .input[data-parent="${pid}"]`)]
+      .sort((a,b)=>getCenter(a).x - getCenter(b).x);
+    const [kL,kR]=kids;
+    const p = getCenter(parent);
+    const baseL = L + MIN_SEP_ROW/2 + CROSS_PAD;
+    const baseR = R - MIN_SEP_ROW/2 - CROSS_PAD;
+    // When ADJUSTING (multiple parents), cap width by MAX_ADJUSTED_SPREAD
+    let width = Math.max(SIB_SEP, Math.min(baseR-baseL, 2*defHalf, MAX_ADJUSTED_SPREAD));
+    let left  = Math.max(baseL, Math.min(baseR - width, p.x - width/2));
+    let right = left + width;
+    return {parent,kL,kR,L:baseL,R:baseR,left,right};
+  });
+}
+function packRowFree(pairs){
+  pairs.forEach(p=>{
+    if(p.right-p.left < SIB_SEP){
+      let w=SIB_SEP;
+      if(p.left + w > p.R){ p.left = Math.max(p.L, p.R - w); }
+      p.right = p.left + w;
+    }
+  });
+  let changed=true, guard=0;
+  while(changed && guard++<50){
+    changed=false;
+    for(let i=1;i<pairs.length;i++){
+      const a=pairs[i-1], b=pairs[i];
+      const need = (a.right + MIN_SEP_ROW) - b.left;
+      if(need>0){
+        const roomB = b.R - b.right;
+        const moveB = Math.min(need, roomB);
+        if(moveB>0){ b.left+=moveB; b.right+=moveB; changed=true; }
+        const still = (a.right + MIN_SEP_ROW) - b.left;
+        if(still>0){
+          const roomA = a.left - a.L;
+          const moveA = Math.min(still, roomA);
+          if(moveA>0){ a.left-=moveA; a.right-=moveA; changed=true; }
+        }
+      }
+    }
+  }
+}
+function applyFree(pairs, childY){
+  pairs.forEach(p=>{
+    setCenter(p.kL, p.left,  childY);
+    setCenter(p.kR, p.right, childY);
+  });
+}
+
+/* ==================== Nodes ==================== */
+let id=0;
+function makeNode({val,x,y,level,parentId}){
+  const d=document.createElement("div");
+  d.className="node";
+  d.textContent=val;
+  Object.assign(d.dataset,{value:val,id:"n"+(++id),level});
+  if(parentId) d.dataset.parent=parentId;
+  d.style.left=(x-NODE_R)+"px";
+  d.style.top =(y-NODE_R)+"px";
+  wrap.appendChild(d);
+  reserve(level,x);
+  if(parentId) connect($(`[data-id="${parentId}"]`), d);
+
+  if(isPrime(+val)) d.classList.add("prime");
+  else d.onclick=()=>splitNode(d);
+  return d;
+}
+function makeInputNode({x,y,level,parent}){
+  const box=document.createElement("div");
+  box.className="node input";
+  Object.assign(box.dataset,{parent:parent.dataset.id,level,id:"n"+(++id)});
+  box.style.left=(x-NODE_R)+"px";
+  box.style.top =(y-NODE_R)+"px";
+  const inp=document.createElement("input"); inp.type="number"; inp.min="2";
+  box.appendChild(inp);
+  wrap.appendChild(box);
+  reserve(level,x);
+  connect(parent,box);
+  setTimeout(()=>inp.focus(),10);
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.stopPropagation(); validatePair(parent); } });
+  inp.addEventListener('blur',()=>validatePair(parent));
+  return box;
+}
+
+/* ==================== Split / validate ==================== */
+function splitNode(div){
+  if(div.dataset.split||finished) return;
+  div.dataset.split=1;
+
+  const level = parseInt(div.dataset.level,10); // parent level
+  const p = getCenter(div);
+  const childY  = p.y + LEVEL_GAP;
+  const half = (DEFAULT_HALF ?? DEFAULT_HALF_FALLBACK); // initial single-parent split: unchanged
+
+  const leftX  = Math.max(MIN_X + MIN_SEP_ROW/2, p.x - half);
+  const rightX = Math.min(MAX_X() - MIN_SEP_ROW/2, p.x + half);
+  makeInputNode({x:leftX,  y:childY, level:level+1, parent:div});
+  makeInputNode({x:rightX, y:childY, level:level+1, parent:div});
+  if(DEFAULT_HALF==null){ DEFAULT_HALF = Math.abs(rightX-leftX)/2; }
+
+  // Reflow ONLY if more than one split parent on this row (this is the "adjustment" case)
+  const parents = $$(`.node[data-level="${level}"][data-split="1"]`).sort((a,b)=>getCenter(a).x - getCenter(b).x);
+  if(parents.length>1){
+    const childLevel = level+1; // row index
+    if(childLevel <= 2){
+      const pairs = centeredPairsFromParents(parents);
+      packRowCentered(pairs);
+      applyCentered(pairs, childY);
+    }else{
+      const pairs = freePairsFromParents(parents);
+      packRowFree(pairs);
+      applyFree(pairs, childY);
+    }
+  }
+}
+
+function validatePair(parent){
+  const kids=$$(`.input[data-parent="${parent.dataset.id}"]`);
+  if(kids.length!==2) return;
+
+  const a=parseInt(kids[0].querySelector('input').value,10);
+  const b=parseInt(kids[1].querySelector('input').value,10);
+  if(!Number.isInteger(a) || !Number.isInteger(b)) return;
+
+  const t=+parent.dataset.value;
+  kids.forEach(k=>k.classList.remove('wrong'));
+  if(a<=1 || b<=1 || a*b!==t){ kids.forEach(k=>k.classList.add('wrong')); return; }
+
+  [a,b].forEach((v,i)=>{
+    const box=kids[i];
+    box.textContent=v;
+    box.className='node';
+    box.dataset.value=v;
+    if(isPrime(v)) box.classList.add('prime');
+    else box.onclick=()=>splitNode(box);
+    updateLineForChild(box);
+  });
+
+  // Reflow this row again after conversion (this is also an "adjustment" case)
+  const level = parseInt(parent.dataset.level,10);
+  const parents = $$(`.node[data-level="${level}"][data-split="1"]`).sort((a,b)=>getCenter(a).x - getCenter(b).x);
+  const childY = getCenter($$(`.node[data-parent="${parents[0].dataset.id}"]`)[0]).y;
+  const childLevel = level+1;
+
+  if(parents.length>1){
+    if(childLevel <= 2){
+      const pairs = centeredPairsFromParents(parents);
+      packRowCentered(pairs);
+      applyCentered(pairs, childY);
+    }else{
+      const pairs = freePairsFromParents(parents);
+      packRowFree(pairs);
+      applyFree(pairs, childY);
+    }
+  }else{
+    // Single parent: keep siblings centered using DEFAULT_HALF (no adjustment cap here)
+    const pid=parent.dataset.id;
+    const ch=[...document.querySelectorAll(`.node[data-parent="${pid}"]`)]
+      .sort((a,b)=>getCenter(a).x - getCenter(b).x);
+    if(ch.length===2){
+      const px=getCenter(parent).x;
+      const half=Math.max(SIB_SEP/2, DEFAULT_HALF ?? DEFAULT_HALF_FALLBACK);
+      setCenter(ch[0], px-half, getCenter(ch[0]).y);
+      setCenter(ch[1], px+half, getCenter(ch[1]).y);
+    }
+  }
+}
+
+/* ==================== Check & scoring ==================== */
+function factorizationString(){
+  const root = document.querySelector('.node[data-level="0"]');
+  if(!root) return '';
+  const n = +root.dataset.value;
+  const primes = $$('div.node').filter(nd=>!nd.dataset.split && isPrime(+nd.dataset.value))
+                               .map(nd=>+nd.dataset.value)
+                               .sort((a,b)=>a-b);
+  if(primes.length===0) return '';
+  return `Well done, ${n} = ${primes.join(' × ')}`;
+}
+
+function checkTree(){
+  $('#successLine').textContent='';
+  $$('div.wrong').forEach(e=>e.classList.remove('wrong'));
+  let ok=true;
+
+  $$('div.node').forEach(n=>{
+    const val=+n.dataset.value;
+    if(isPrime(val)) return;
+    if(!n.dataset.split){ n.classList.add('wrong'); ok=false; return; }
+    const kids=$$(`div.node[data-parent="${n.dataset.id}"]`);
+    if(kids.length!==2){ n.classList.add('wrong'); ok=false; return; }
+    const [a,b]=kids.map(k=>+k.dataset.value);
+    if(!Number.isInteger(a) || !Number.isInteger(b) || a*b!==val){
+      kids.forEach(k=>k.classList.add('wrong')); ok=false;
+    }
+  });
+
+  $$('div.node').filter(n=>!n.dataset.split).forEach(l=>{
+    const v=+l.dataset.value;
+    if(!isPrime(v)){ l.classList.add('wrong'); ok=false; }
+  });
+
+  if(ok){
+    finished=true;
+    $("#checkBtn").disabled=true; $("#nextBtn").disabled=false; $("#skipBtn").disabled=true;
+    $$('div.node').forEach(n=>n.classList.add('correctFlash'));
+    setTimeout(()=>$$('.correctFlash').forEach(n=>n.classList.remove('correctFlash')),550);
+    $("#score").textContent='Score '+(++score);
+    const line=factorizationString();
+    if(line){ $('#successLine').textContent=line; }
+    confetti({particleCount:180,spread:70,origin:{y:.62}});
+    if(targetActive && score>=target) endGame('🎯 Target reached!');
+  }else showToast('❌ Fix the red circles.');
+}
+
+/* ==================== Game flow ==================== */
+let finished=false, score=0, secs=0, timerID=null, limit=-1, targetActive=false, target=0;
+
+function clearScene(){
+  $$('div.node').forEach(n=>n.remove());
+  svg.innerHTML='';
+  id=0; clearReservations(); lineByChildId.clear();
+  DEFAULT_HALF=null;
+  $('#successLine').textContent='';
+}
+function newTree(){
+  clearScene(); finished=false;
+  $("#checkBtn").disabled=false; $("#nextBtn").disabled=true; $("#skipBtn").disabled=false;
+  const n = randomComposite();
+  const x = wrap.clientWidth/2, y = 16 + NODE_R;
+  makeNode({val:n, x, y, level:0});
+  fitToViewport();
+}
+function endGame(msg){
+  stopTimer();
+  $("#checkBtn").disabled=true; $("#skipBtn").disabled=true; $("#nextBtn").disabled=true;
+  const finalLine=factorizationString();
+  $("#endTitle").textContent=msg;
+  $("#endMsg").innerHTML=`${finalLine ? finalLine + '<br/>' : ''}Score: <b>${score}</b> &nbsp; • &nbsp; Time: <b>${fmt(secs)}</b>`;
+  $("#endOv").classList.add('show');
+}
+
+/* Timer */
+function startTimer(){
+  secs=0;
+  $("#timer").textContent= limit<0 ? `Time ${fmt(secs)}` : `Time ${fmt(limit)}`;
+  timerID=setInterval(()=>{
+    secs++;
+    if(limit<0){ $("#timer").textContent=`Time ${fmt(secs)}`; }
+    else{
+      const rem=limit-secs; $("#timer").textContent=`Time ${fmt(rem)}`;
+      if(rem<=0) endGame('⏰ Time up!');
+    }
+  },1000);
+}
+function stopTimer(){ clearInterval(timerID); timerID=null; }
+
+/* ==================== UI wiring ==================== */
+$("#checkBtn").onclick=checkTree;
+$("#nextBtn").onclick=()=>!$("#nextBtn").disabled && newTree();
+$("#skipBtn").onclick =()=>{ showToast('⏭ Skipped.'); newTree(); };
+
+document.addEventListener('keydown',e=>{
+  const t=e.target;
+  if(e.key==='Enter'){
+    if(t && t.tagName==='INPUT') return;
+    if(!$("#checkBtn").disabled) $("#checkBtn").click();
+  }
+  if(e.key.toLowerCase()==='n' && !$("#nextBtn").disabled) $("#nextBtn").click();
+  if(e.key.toLowerCase()==='s') $("#skipBtn").click();
+});
+
+/* Setup dialog */
+$("#againBtn").onclick = ()=>{
+  $("#endOv").classList.remove('show');
+  $("#setupOv").classList.add('show');
+};
+$("#targetChk").onchange=e=>{
+  $("#targetInput").style.display = e.target.checked ? 'block' : 'none';
+};
+$("#beginBtn").onclick=()=>{
+  difficulty = $("#diffSel").value || 'standard';
+  // for 'higher', first question should be 432 (testing)
+  forceFirst432 = (difficulty === 'higher');
+
+  limit = parseInt($("#timeSel").value,10);
+  targetActive = $("#targetChk").checked;
+  target = targetActive ? Math.max(1, parseInt($("#targetInput").value||"1",10)) : 0;
+
+  score=0; $("#score").textContent="Score 0";
+  $("#panel").style.visibility='visible';
+  $("#setupOv").classList.remove('show');
+  $("#endOv").classList.remove('show');
+
+  newTree(); startTimer();
+};
+
+/* Initial fit */
+fitToViewport();
+</script>
+</body>
+</html>
